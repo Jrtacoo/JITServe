@@ -603,7 +603,7 @@ if __name__ == '__main__':
         "--trace-path",
         type=str,
         # default="benchmark/trace/dataset/trace/deepresearch_trace_filtered_8192.jsonl",
-        default="benchmark/trace/dataset/trace/test_deepresearch_llama3_maxout1024_filtered8192.jsonl",
+        default=str(Path(__file__).resolve().parents[1] / "traces/deepresearch_filter.jsonl"),
         help="Path to the DeepResearch trace file.",
     )
     parser.add_argument(

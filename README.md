@@ -18,6 +18,11 @@ scheduling and preemption mechanisms described in the paper.
 
 ## Getting Started
 
+For a staged reproduction with proxy/CA setup, CUDA environment checks,
+resource downloads, smoke requests and a small mixed benchmark, follow
+[REPRODUCE.md](REPRODUCE.md). The runner saves server logs and metrics and
+waits for `/health` instead of assuming a fixed model loading time.
+
 ### Prerequisites
 - Python 3.10+
 - CUDA 12+
@@ -68,12 +73,12 @@ package.
 
 QRF prediction server:
 ```bash
-python jitserve/request_analyzer/prediction.py
+python -m jitserve.request_analyzer.prediction
 ```
 
 Mixed workload benchmark:
 ```bash
-bash scripts/benchmark_mixed.sh
+python scripts/reproduce.py benchmark --model ../models/Qwen2.5-7B-Instruct
 ```
 
 Notes:

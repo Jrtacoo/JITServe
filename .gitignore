@@ -8,6 +8,9 @@ share/python-wheels/
 *.egg-info/
 *.egg
 .deps/
+.venv*/
+.pytest_cache/
+reproduction_results/
 
 # VSCode
 .vscode/

@@ -7,7 +7,7 @@ name = "jitserve"
 version = "0.1.0"
 description = "JITServe: SLO-aware LLM Serving with Imprecise Request Information"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 
 authors = [
   { name = "Wei Zhang", email = "zhangw2@illinois.edu" },
@@ -23,3 +23,6 @@ classifiers = [
 ]
 
 dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["jitserve*"]

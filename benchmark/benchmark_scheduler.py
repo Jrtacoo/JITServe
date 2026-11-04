@@ -11,7 +11,7 @@ import time
 import torch
 import warnings
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from torch.profiler import profile, record_function, ProfilerActivity
 from typing import Any, AsyncGenerator, Collection, Dict, List, Optional, Tuple
@@ -736,6 +736,7 @@ async def benchmark(
     )
     
     print_benchmark_results(metrics, task_metrics, time_window_seconds=60)
+    return metrics, task_metrics
 
 
 def main(args: argparse.Namespace):
@@ -788,7 +789,7 @@ def main(args: argparse.Namespace):
     
     print("Experiment Setting: ", exp_setting)
     
-    asyncio.run(
+    metrics, task_metrics = asyncio.run(
         benchmark(
             api_url=api_url,
             base_url=base_url,
@@ -815,6 +816,18 @@ def main(args: argparse.Namespace):
             is_stream=args.is_stream,
         ))
 
+    if args.save_result:
+        result_dir = Path(args.result_dir)
+        result_dir.mkdir(parents=True, exist_ok=True)
+        filename = args.result_filename
+        if filename in (None, "None"):
+            filename = f"{args.policy}-{exp_setting['date']}.json"
+        result_path = result_dir / filename
+        result = {"settings": exp_setting, "requests": asdict(metrics),
+                  "tasks": asdict(task_metrics)}
+        result_path.write_text(json.dumps(result, indent=2, default=lambda value: value.tolist()) + "\n")
+        print(f"Benchmark result saved to {result_path}")
+
 
 if __name__ == '__main__':
     parser = FlexibleArgumentParser(
@@ -836,7 +849,7 @@ if __name__ == '__main__':
     parser.add_argument(
         "--trace-path",
         type=str,
-        default="benchmark/trace/dataset/trace/lmsys.json",
+        default=str(Path(__file__).resolve().parents[1] / "traces/lmsys.json"),
         help="Path to the trace file.",
     )
     parser.add_argument(

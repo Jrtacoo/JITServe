@@ -35,6 +35,8 @@ from vllm.utils import (FlexibleArgumentParser, iterate_with_cancellation,
 from vllm.transformers_utils.tokenizer import get_tokenizer
 
 from jitserve.request_info import RequestInfo, RequestType
+from jitserve.paths import QRF_MODEL, QRF_VECTORIZER, DEEPRESEARCH_TRAINING
+from jitserve.request_analyzer.prediction_protocol import send_message, receive_message
 
 logger = init_logger("vllm.entrypoints.api_server")
 
@@ -67,27 +69,21 @@ graph_ctx: Optional[GraphMatchContext] = None
 def send_request_to_prediction(connection: socket.socket, request_info: RequestInfo, prompt):
     try:
         data = {'prompt': [prompt]}
-        data_to_send = pickle.dumps(data)
-        connection.sendall(data_to_send)
-
-        data = connection.recv(4096)
-        if data:
-            received_data = pickle.loads(data)
-            return received_data['output_len'][0]
-        else:
-            return 1024
-    except socket.error as e:
-        # logger.info(f"Error while sending/receiving data: {e}")
+        send_message(connection, data)
+        received_data = receive_message(connection)
+        return received_data['output_len'][0]
+    except (OSError, EOFError, ValueError, pickle.UnpicklingError) as e:
+        logger.warning("QRF prediction failed; using default length: %s", e)
         return 1024
 
 def send_and_update_request_info(request_info: RequestInfo, prompt: str):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect(('localhost', 65433))
-
-        result_len = send_request_to_prediction(s, request_info, prompt)
-
-        if result_len:
-            request_info.output_len = result_len
+    try:
+        with socket.create_connection(('localhost', 65433), timeout=10) as s:
+            result_len = send_request_to_prediction(s, request_info, prompt)
+            if result_len:
+                request_info.output_len = result_len
+    except OSError as e:
+        logger.warning("Cannot connect to QRF server; using default length: %s", e)
 
 
 def _build_sampling_params(request_dict: Dict[str, Any]) -> SamplingParams:
@@ -291,24 +287,25 @@ async def init_app(
     global graph_ctx
 
     engine_args = AsyncEngineArgs.from_cli_args(args)
-    engine_args.max_model_len = 8192
 
-    if not args.disable_prediction:
-        if engine_args.scheduling_policy in ['ltr', 'jitserve', 'slo']:
-            use_prediction = True
-            logger.info(f"Prediction model is enabled")
+    use_prediction = (not args.disable_prediction and
+                      engine_args.scheduling_policy in ['ltr', 'jitserve', 'slo'])
+    if use_prediction:
+        logger.info("Prediction model is enabled")
             
-    if not args.disable_graph_matching:
-        if engine_args.scheduling_policy in ['jitserve', 'slo', 'srtf']:
-            use_graph_matching = True
-            logger.info(f"Graph matching is enabled")
+    use_graph_matching = (not args.disable_graph_matching and
+                          engine_args.scheduling_policy in ['jitserve', 'slo', 'srtf'])
+    if use_graph_matching:
+        logger.info("Graph matching is enabled")
 
-    if args.use_default_length:
-        use_default_length = True
+    use_default_length = args.use_default_length
     
     # Set graph structure type and matching mode from arguments
     graph_structure_type = args.graph_structure_type
     graph_matching_mode = args.graph_matching_mode
+    if args.disable_graph_matching:
+        use_graph_matching = False
+        graph_matching_mode = "none"
     use_total_deadline = args.use_total_deadline
     use_all_node = args.use_all_node
     stage_ratio_method = args.stage_ratio_method
@@ -338,7 +335,7 @@ async def init_app(
     
     # Load deepresearch training data and construct graphs
     logger.info("Loading deepresearch training data...")
-    deepresearch_training_path = "benchmarks/dataset/trace/deepresearch_training.json"
+    deepresearch_training_path = str(DEEPRESEARCH_TRAINING)
     try:
         deepresearch_graphs = read_deepresearch_traces(deepresearch_training_path, is_all_node=use_all_node)
         logger.info(f"Loaded {len(deepresearch_graphs)} deepresearch training graphs.")
@@ -383,7 +380,8 @@ async def run_server(args: Namespace,
                      **uvicorn_kwargs: Any) -> None:
     logger.info("args: %s", args)
 
-    if args.disable_prediction is False:
+    if (not args.disable_prediction and not args.use_default_length and
+            args.scheduling_policy in ['ltr', 'jitserve', 'slo']):
         await init_prediction_model(args)
     app = await init_app(args, llm_engine)
     assert engine is not None
@@ -428,11 +426,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--disable-prediction",
         action='store_true',
-        help="Enable prediction model")
+        help="Disable output length prediction")
     parser.add_argument(
         "--disable-graph-matching",
         action='store_true',
-        help="Enable graph matching")
+        help="Disable graph matching")
     parser.add_argument(
         "--use-default-length",
         action='store_true',
@@ -440,12 +438,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--prediction-model-path",
         type=str,
-        default='assets/qrf/qrf_model/0_qrf_lmsys_chat_llama3_8b.pkl',
+        default=str(QRF_MODEL),
         help="Path to the prediction model")
     parser.add_argument(
         "--prediction-tokenizer-path",
         type=str,
-        default='assets/qrf/qrf_vectorizer/0_qrf_lmsys_chat_llama3_8b.pkl',
+        default=str(QRF_VECTORIZER),
         help="Path to the prediction tokenizer")
     parser.add_argument(
         "--graph-structure-type",

@@ -1,18 +1,22 @@
 import asyncio
+import argparse
 import socket
 import numpy as np
-import pickle
 from joblib import load
 from typing import Tuple
 from jitserve.request_info import RequestInfo
+from jitserve.paths import QRF_MODEL, QRF_VECTORIZER
+from jitserve.request_analyzer.prediction_protocol import send_message, receive_message
 
 # Load the model and tokenizer
 def load_model(model_path: str, tokenizer_path: str) -> Tuple:
     try:
         model = load(model_path)
         tokenizer = load(tokenizer_path)
-    except:
-        raise Exception("Model or tokenizer not found")
+    except Exception as exc:
+        raise RuntimeError(
+            f"Cannot load QRF model {model_path} and vectorizer {tokenizer_path}: {exc}"
+        ) from exc
     return model, tokenizer
 
 # Perform prediction on the input using the loaded model and vectorizer
@@ -32,16 +36,10 @@ async def async_predict(vectorizer, model, input, request_info: RequestInfo) -> 
 def handle_request(connection: socket.socket, model, vectorizer):
     try: 
         with connection:
-            data = connection.recv(4096)
-            if data:
-                request_info = pickle.loads(data)
-
-                result = predict(vectorizer, model, request_info['prompt'])
-                result = {"output_len": result}
-
-                # Serialize and send the result back to xx.py
-                data_to_send = pickle.dumps(result)
-                connection.sendall(data_to_send)
+            connection.settimeout(30)
+            request_info = receive_message(connection)
+            result = predict(vectorizer, model, request_info['prompt'])
+            send_message(connection, {"output_len": result})
     except Exception as e:
         print(f"Error during request handling: {e}")
     finally:
@@ -52,10 +50,11 @@ def start_client(model_path: str, tokenizer_path: str):
 
     # Create a TCP/IP socket
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_socket.bind(('localhost', 65433))
     server_socket.listen(5)
 
-    print("Server is listening...")
+    print("QRF server is listening on localhost:65433", flush=True)
 
     while True:
         connection, client_address = server_socket.accept()
@@ -64,8 +63,9 @@ def start_client(model_path: str, tokenizer_path: str):
         # Handle each request
         handle_request(connection, model, tokenizer)
 
-model_path = 'assets/qrf/qrf_model/0_qrf_lmsys_chat_llama3_8b.pkl'
-tokenizer_path = 'assets/qrf/qrf_vectorizer/0_qrf_lmsys_chat_llama3_8b.pkl'
-
 if __name__ == "__main__":
-    start_client(model_path, tokenizer_path)
+    parser = argparse.ArgumentParser(description="Run the QRF length prediction service")
+    parser.add_argument("--model-path", default=str(QRF_MODEL))
+    parser.add_argument("--tokenizer-path", default=str(QRF_VECTORIZER))
+    args = parser.parse_args()
+    start_client(args.model_path, args.tokenizer_path)
