@@ -1,6 +1,7 @@
 # Versions for the vendored October 2024 engine and the published QRF artifacts.
 # Install third_party/vllm separately; never resolve upstream vllm from PyPI.
 # This reproduction environment targets Python 3.11.
+cmake>=3.26,<4
 numpy==1.26.4
 scipy==1.17.1
 scikit-learn==1.5.1
@@ -13,5 +14,7 @@ datasets==3.0.2
 pandas==2.2.3
 fastapi==0.115.4
 outlines==0.0.46
+# The currently published 0.0.1 package lacks pyairports.airports.
+pyairports @ https://codeload.github.com/NICTA/pyairports/tar.gz/9699eae8c6b03c97239018dea92e01daa8594936
 mistral-common==1.4.4
 pytest==9.2.0

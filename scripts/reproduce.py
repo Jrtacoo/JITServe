@@ -46,6 +46,9 @@ def require_environment():
 
 def ensure_free_port(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        # A completed experiment can leave accepted connections in TIME_WAIT.
+        # Match the HTTP server's reuse behavior while still rejecting listeners.
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("127.0.0.1", port))
 
 
@@ -179,6 +182,8 @@ def run_experiments(args):
     require_environment()
     args.output.mkdir(parents=True, exist_ok=True)
     policies = args.policies.split(",")
+    if args.action == "serve" and len(policies) != 1:
+        raise ValueError("serve requires exactly one policy; use --policies jitserve or --policies fcfs")
     if any(policy not in ("fcfs", "jitserve") for policy in policies):
         raise ValueError("Supported reproduction policies: fcfs,jitserve")
     trace_path = prepare_trace(args.num_prompts, args.output) if args.action == "benchmark" else None
@@ -197,6 +202,13 @@ def run_experiments(args):
             result = smoke_request(args)
             (args.output / f"{policy}-smoke.json").write_text(json.dumps(result, indent=2) + "\n")
             print(f"{policy}: smoke request passed", flush=True)
+            if args.action == "serve":
+                print(f"JITServe is ready at http://127.0.0.1:{args.port}; press Ctrl-C to stop", flush=True)
+                while server.poll() is None:
+                    if policy == "jitserve" and predictor.poll() is not None:
+                        raise RuntimeError("QRF predictor exited; inspect qrf.log")
+                    time.sleep(1)
+                raise RuntimeError(f"Server exited with code {server.returncode}")
             if args.action == "benchmark":
                 command = [sys.executable, "benchmark/benchmark_scheduler.py", "--model", args.model,
                            "--host", "127.0.0.1", "--port", str(args.port), "--policy", policy,
@@ -217,7 +229,7 @@ def run_experiments(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["check", "download", "qrf", "smoke", "benchmark"])
+    parser.add_argument("action", choices=["check", "download", "qrf", "smoke", "benchmark", "serve"])
     parser.add_argument("--model", default="Qwen/Qwen2.5-7B-Instruct")
     parser.add_argument("--qrf-family", choices=["qwen25_7b", "llama3_8b"], default="qwen25_7b")
     parser.add_argument("--assets-only", action="store_true")
@@ -244,8 +256,15 @@ def main():
 
 
 if __name__ == "__main__":
+    def stop_service(signum, frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, stop_service)
     try:
         main()
+    except KeyboardInterrupt:
+        print("JITServe stopped", file=sys.stderr)
+        raise SystemExit(0)
     except (RuntimeError, OSError, TimeoutError, ValueError, subprocess.SubprocessError) as exc:
         print(f"Reproduction failed: {exc}", file=sys.stderr)
         raise SystemExit(1)
